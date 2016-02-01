@@ -1,0 +1,225 @@
+---
+title: "Practical Machine Learning Project"
+author: "José Villegas"
+output: html_document
+---
+
+## Introduction
+
+This is the final project for the Project Machine Learning Course, wich is a 
+Coursera's MOOC.
+
+Using devices such as **Jawbone Up, Nike FuelBand, and Fitbit** it is now possible 
+to collect a large amount of data about personal activity relatively 
+inexpensively. These type of devices are part of the quantified self movement - 
+a group of enthusiasts who take measurements about themselves regularly to 
+improve their health, to find patterns in their behavior, or because they are 
+tech geeks. One thing that people regularly do is quantify how much of a 
+particular activity they do, but they rarely quantify how well they do it. In 
+this project, your goal will be to use data from accelerometers on the belt, 
+forearm, arm, and dumbell of 6 participants. They were asked to perform barbell 
+lifts correctly and incorrectly in 5 different ways. More information is 
+available from the website [here][1] (see the section on the Weight Lifting 
+Exercise Dataset).
+
+[1]: http://groupware.les.inf.puc-rio.br/har "here"
+
+# Data Sources
+
+The training data for this project are available [here][1].
+The test data are available [here][2].
+
+[1]: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv "here"
+[2]: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv "here"
+
+# Objective
+
+The goal of this project is to predict the manner in which they did the 
+exercise. This is the "classe" variable in the training set. I may use any of 
+the other variables to predict with. I should create a report describing how I 
+built my model, how I used cross validation, what I think the expected out of 
+sample error is, and why I made the choices I did. I will also use my 
+prediction model to predict 20 different test cases.
+
+## Getting and Cleaning Data
+
+First of all I load the necessary libraries:
+
+```{r, echo=T, warning=F, message=F}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(Hmisc)
+library(plyr)
+```
+
+Then I obtain the data:
+
+```{r, echo=T, warning=F, message=F}
+train_Url <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_Url <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training <- read.csv(url(train_Url), na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(url(test_Url), na.strings=c("NA","#DIV/0!",""))
+```
+
+Now I start to clean the data for a better analysis. I transform some variables 
+in factors
+
+```{r, echo=T, warning=F, message=F}
+# Convert yes/no into 1/0
+testing$new_window = 1*(testing$new_window=="yes")
+testing$new_window <- as.factor(testing$new_window)
+
+training$new_window = 1*(training$new_window=="yes")
+training$new_window <- as.factor(training$new_window)
+training$classe <- factor(training$classe)
+```
+
+Later I remove variables with either 0 or NA:
+
+```{r, echo=T, warning=F, message=F}
+null_values <- names(training) %in% c("kurtosis_yaw_belt", 
+                                   "kurtosis_yaw_dumbbell", 
+                                   "kurtosis_yaw_forearm", "skewness_yaw_belt", 
+                                   "skewness_yaw_dumbbell", 
+                                   "skewness_yaw_forearm", 
+                                   "amplitude_yaw_belt", 
+                                   "amplitude_yaw_dumbbell", 
+                                   "amplitude_yaw_forearm")
+training.new <- training[!null_values]
+
+null_values.2 <- names(training.new) %in% c("X", "user_name", 
+                                            "raw_timestamp_part_1", 
+                                            "raw_timestamp_part_2", 
+                                            "cvtd_timestamp") 
+training.new <- training.new[!null_values.2]
+
+# remove variables that's mostly NA's (> 95%) 
+index.NA <- sapply(training.new, is.na)
+Sum.NA <- colSums(index.NA)
+percent.NA <- Sum.NA/(dim(training.new)[1])
+to.remove <- percent.NA>.95
+training.small <- training.new[,!to.remove]
+dim(training.small)
+```
+
+There are 9 variables consist of only 0 or NA, namely, ***kurtosis_yaw_belt, 
+kurtosis_yaw_dumbbell, kurtosis_yaw_forearm, skewness_yaw_belt, 
+skewness_yaw_dumbbell, skewness_yaw_forearm, amplitude_yaw_belt, 
+amplitude_yaw_dumbbell, and amplitude_yaw_forearm***. There are 91 variables 
+with more than 95% of the data missing. Those variables will not help in terms 
+of classification.
+
+Then I split the training data into two data sets, with the proportion of 6 and 
+4:
+
+```{r, echo=T, warning=F, message=F}
+set.seed(12345)
+inTrain <- createDataPartition(training.small$classe, p=0.6, list=FALSE)
+subTraining <- training.small[inTrain, ]
+subTesting <- training.small[-inTrain, ]
+dim(subTraining); dim(subTesting)
+```
+
+## Models building
+
+I build some models using the techniques more useful for this analysis, as 
+regression tree, random forest, boosted regression and cross validation.
+
+# Regression Tree
+
+```{r, echo=T, warning=F, message=F}
+# fit the model after preprocessing 
+modelFit1 <- train(classe ~., method="rpart", preProcess=c("center", "scale"), 
+                   data=subTraining, trControl = trainControl(method="cv", 
+                                                              number=10))
+result1 <- confusionMatrix(subTesting$classe, predict(modelFit1, 
+                                                     newdata=subTesting))
+
+result1
+plot(result1$table, col = result1$byClass, 
+     main = paste("Regression Tree Confusion Matrix: Accuracy =", 
+                  round(result1$overall['Accuracy'], 4)))
+```
+
+The accuracies of the model using regression tree isn't good at all. The 
+accuracy is only around 50%, which is not acceptable.
+
+# Random Forest
+
+```{r, echo=T, warning=F, message=F}
+# try full model 
+modelFit2 <- randomForest(classe ~., data=subTraining)
+result2<- confusionMatrix(subTesting$classe, predict(modelFit2, newdata=subTesting))
+
+result2
+plot(result2$table, col = result2$byClass, 
+     main = paste("Random Forest Confusion Matrix: Accuracy =", 
+                  round(result2$overall['Accuracy'], 4)))
+```
+
+The model with random forest model has a accuracy of 0.996, which is even 
+better.
+
+# Generalized Boosted Regression
+
+```{r, echo=T, warning=F, message=F}
+modelFit3 <- train(classe ~ ., data=subTraining, method = "gbm",
+                 trControl = trainControl(method = "repeatedcv",
+                           number = 5,
+                           repeats = 1),
+                 verbose = FALSE)
+result3 <- confusionMatrix(subTesting$classe, predict(modelFit3, newdata = subTesting))
+result3
+plot(result3$table, col = result3$byClass, 
+     main = paste("Generalized Boosted Regression Confusion Matrix: Accuracy =", 
+                  round(result3$overall['Accuracy'], 4)))
+```
+
+The model with random forest model has a accuracy of 0.986, which is good but 
+not enough.
+
+# Croos Validation
+
+```{r, echo=T, warning=F, message=F}
+x = 10
+parts <- split(subTraining, f = rep_len(1:x, nrow(subTraining)))
+
+# make a help function to combine the list of 10 equal size data
+combinedata <- function(index){
+  data <- parts[[index[1]]]
+  for (i in 2:(length(index))) data <- rbind(data, parts[[index[i]]])
+  data
+}
+
+cross.validation.result <- as.data.frame(matrix(nrow=7, ncol=x))
+
+index <- 1:x
+
+for (i in 1:x){
+  currentdata <- combinedata(index[index!= i])
+  model <- randomForest(classe~., data=currentdata)
+  result <- confusionMatrix(parts[[i]]$classe, predict(model, newdata=parts[[i]]))
+  cross.validation.result[,i] <- result$overall
+}
+cross.validation.result
+```
+
+For the purpose of prediction, the model with higher accuracy was selected 
+which is random forest. Because of we should use the model with highest accuracy.
+
+## Expected Out of Sample Error
+
+The out of sample error is just the error rate that we get when we apply the 
+classification model on the 10-fold cross validation samples. As we can see, 
+the errors are 0.003, 0.002, 0.001, 0.002, 0, 0.001, 0.001, 0.002, 0.002, 0.002.
+
+## Conclusion
+
+Without comparing the out of sample error rates, we can simply tell the Random 
+forest classification technique works better than a regression tree and a 
+generalized boosted regression in this case.
+
